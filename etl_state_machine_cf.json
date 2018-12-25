@@ -1,0 +1,303 @@
+{
+  "Description":"CloudFormation template to create required AWS resources",
+  "Metadata" : {
+    "AWS::CloudFormation::Interface" : {
+        "ParameterGroups" : [{
+            "Label" : { "default" : "EMR Cluster Configuration" },
+            "Parameters" : [ "SubnetID", "KeyName", "VPCID" ]
+        },{
+            "Label" : { "default":"Spark ETL Configuration" },
+            "Parameters" : [ "S3Bucket"]
+        }],
+        "ParameterLabels" : {
+          "SubnetID" : { "default" : "Subnet ID: " },
+          "KeyName": { "default": "Key pair name: " },
+          "VPCID": { "default": "VPC ID: " },
+          "S3Bucket" : { "default" : "S3 Bucket: " }
+        }
+    }
+  },
+  "Parameters": {
+    "SubnetID": {
+      "Description": "ID of an existing subnet for the Amazon EMR cluster",
+      "Type": "AWS::EC2::Subnet::Id"
+    },
+    "KeyName": {
+      "Description": "Name of an existing EC2 key pair to access the Amazon EMR cluster",
+      "Type": "AWS::EC2::KeyPair::KeyName"
+    },
+    "S3BucketName":{
+          "Type": "String",
+          "Description": "S3 bucket associated with the S3RootPath"
+    },
+    "VPCID": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "ID of an existing VPC where Amazon EMR cluster will be deployed"
+    }
+  },
+  "Resources":{
+    "EMRCluster":{
+      "Type":"AWS::EMR::Cluster",
+      "Properties":{
+        "Name":"EMR-Step-Functions",
+        "JobFlowRole":"EMR_EC2_DefaultRole",
+        "ServiceRole":"EMR_DefaultRole",
+        "ReleaseLabel":"emr-5.12.0",
+        "LogUri" : { "Fn::Join": ["",[ "s3://", {"Ref": "S3BucketName"}, "/logs"]] },
+        "VisibleToAllUsers":"true",
+        "Instances": {
+          "HadoopVersion": "2.8.3",
+          "TerminationProtected": false,
+          "Ec2KeyName": {
+            "Ref": "KeyName"
+          },
+          "Ec2SubnetId": {
+            "Ref": "SubnetID"
+          },
+          "MasterInstanceGroup": {
+            "InstanceCount": 1,
+            "InstanceType": "m4.xlarge",
+            "Market": "ON_DEMAND",
+            "Name": "Master"
+          },
+          "CoreInstanceGroup": {
+            "InstanceCount": 2,
+            "InstanceType": "m4.xlarge",
+            "Market": "ON_DEMAND",
+            "Name": "Core"
+          },
+          "AdditionalMasterSecurityGroups": [{ "Ref" : "LambdaSecurityGroup" }]
+        },
+        "Applications":[
+          {
+            "Name":"Hadoop"
+          },
+          {
+            "Name":"Livy"
+          },
+          {
+            "Name":"Spark"
+          },
+          {
+            "Name":"Hive"
+          }
+        ]
+      }
+    },
+    "LambdaStateMachineRole":{
+      "Type":"AWS::IAM::Role",
+      "Properties":{
+        "RoleName":"blog-lambda-state-machine-role",
+        "Path": "/",
+        "AssumeRolePolicyDocument":{
+          "Version":"2012-10-17",
+          "Statement":[
+            {
+              "Effect":"Allow",
+              "Principal":{
+                "Service":[
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action":[
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "ManagedPolicyArns":[
+          "arn:aws:iam::aws:policy/AWSLambdaFullAccess",
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+          "arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess"
+        ]
+      }
+    },
+    "StepFunctionsStateExecutionRole":{
+      "Type":"AWS::IAM::Role",
+      "Properties":{
+        "RoleName":"etl-step-functions-state-execution-role",
+        "Path": "/",
+        "AssumeRolePolicyDocument":{
+          "Version":"2012-10-17",
+          "Statement":[
+            {
+              "Effect":"Allow",
+              "Principal":{
+                "Service":[
+                   "states.us-east-1.amazonaws.com",
+                   "states.us-east-2.amazonaws.com",
+                   "states.us-west-2.amazonaws.com",
+                   "states.ap-northeast-1.amazonaws.com",
+                   "states.ap-southeast-1.amazonaws.com",
+                   "states.ap-southeast-2.amazonaws.com",
+                   "states.ca-central-1.amazonaws.com",
+                   "states.eu-central-1.amazonaws.com",
+                   "states.eu-west-1.amazonaws.com",
+                   "states.eu-west-2.amazonaws.com"
+                ]
+              },
+              "Action":[
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Policies":[
+          {
+            "PolicyName":"state-execution-policy",
+            "PolicyDocument":{
+              "Version":"2012-10-17",
+              "Statement":[
+                {
+                  "Effect":"Allow",
+                  "Action":[
+                    "lambda:InvokeFunction"
+                  ],
+                  "Resource":"*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName":"s3-bucket-policy",
+            "PolicyDocument":{
+              "Version":"2012-10-17",
+              "Statement":[
+                {
+                  "Effect": "Allow",
+                  "Action": "*",
+                  "Resource": { "Fn::Join": [ "", ["arn:aws:s3:::", "{ \"Ref\": \"S3BucketName\" }", "/*"]]}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "SparkJobStatusFunction":{
+      "Type":"AWS::Lambda::Function",
+      "Properties":{
+        "Handler":"check_job_status.handler",
+        "FunctionName":"spark-job-status-function",
+        "Role": { "Fn::GetAtt" : [ "LambdaStateMachineRole" , "Arn" ]},
+        "Code": {
+          "S3Bucket": {"Ref": "S3BucketName"},
+          "S3Key": "checkJobStatus.zip"
+        },
+        "Environment" : {
+          "Variables" : { "emrMaster" : {"Fn::GetAtt" : ["EMRCluster", "MasterPublicDNS"]}}
+        },
+        "Runtime":"python3.6",
+        "Timeout":"25",
+        "TracingConfig":{
+          "Mode":"Active"
+        },
+        "VpcConfig":{
+          "SecurityGroupIds" : [ { "Ref" : "LambdaSecurityGroup" } ],
+          "SubnetIds" : [ { "Ref": "SubnetID"} ]
+        }
+      }
+    },
+    "SubmitSparkJobFunction":{
+      "Type":"AWS::Lambda::Function",
+      "Properties":{
+        "Handler":"submit_spark_job.handler",
+        "FunctionName":"spark-job-submit-function",
+        "Role": { "Fn::GetAtt" : [ "LambdaStateMachineRole" , "Arn" ]},
+        "Code": {
+          "S3Bucket": {"Ref": "S3BucketName"},
+          "S3Key": "submitJob.zip"
+        },
+        "Environment" : {
+          "Variables" : { "emrMaster" : {"Fn::GetAtt" : ["EMRCluster", "MasterPublicDNS"]},
+                          "s3_base_path" : {"Fn::Join" : ["", ["s3://", { "Ref": "S3BucketName" }]]},
+                          "jar_path" : "spark_job.jar",
+                          "class_name" : "com.example.etl.ScoreJoiner"
+                        }
+        },
+        "Runtime":"python3.6",
+        "Timeout":"25",
+        "TracingConfig":{
+          "Mode":"Active"
+        },
+        "VpcConfig":{
+          "SecurityGroupIds" : [ { "Ref" : "LambdaSecurityGroup" } ],
+          "SubnetIds" : [ { "Ref": "SubnetID"} ]
+        }
+      }
+    },
+    "LambdaSecurityGroup":{
+        "Type": "AWS::EC2::SecurityGroup",
+        "Properties" : { 
+            "VpcId" : { "Ref" : "VPCID" },
+            "GroupName": "lambda-sec-group",
+            "GroupDescription" : "Security group for Lambda function",
+            "SecurityGroupIngress" : [{
+                "IpProtocol" : "tcp",
+                "FromPort"   : 8998,
+                "ToPort"     : 8998,
+                "CidrIp"     : "0.0.0.0/0"
+            }]
+        }
+    },
+    "SparkETLStateMachine" : {
+      "Type" : "AWS::StepFunctions::StateMachine",
+      "Properties" : {
+        "StateMachineName" : "Spark-ETL-State-Machine",
+        "DefinitionString" : {
+          "Fn::Join":[
+            "\n",
+            [
+              "{",
+              "   \"Comment\": \"Spark ETL State Machine\",",
+              "   \"StartAt\": \"Submit Job\",",
+              "   \"States\": {",
+              "       \"Submit Job\": {",
+              "           \"Type\": \"Task\",",
+              { "Fn::Join":[ "", ["           \"Resource\": \"", {"Fn::GetAtt" : ["SubmitSparkJobFunction", "Arn"]},"\","]]},
+              "           \"ResultPath\": \"$.jobId\",",
+              "           \"Next\": \"Wait for job to complete\"",
+              "       },",
+              "       \"Wait for job to complete\": {",
+              "           \"Type\": \"Wait\",",
+              "           \"Seconds\": 15,",
+              "           \"Next\": \"Query job status\"",
+              "       },",
+              "       \"Query job status\": {",
+              "           \"Type\": \"Task\",",
+              { "Fn::Join":[ "", ["           \"Resource\": \"", {"Fn::GetAtt" : ["SparkJobStatusFunction", "Arn"]},"\","]]},
+              "           \"Next\": \"Job complete?\",",
+              "           \"ResultPath\": \"$.jobStatus\"",
+              "       },",
+              "       \"Job complete?\": {",
+              "           \"Type\": \"Choice\",",
+              "           \"Choices\": [{",
+              "               \"Variable\": \"$.jobStatus\",",
+              "               \"StringEquals\": \"success\",",
+              "               \"Next\": \"Job completed\"",
+              "           },{",
+              "               \"Variable\": \"$.jobStatus\",",
+              "               \"StringEquals\": \"dead\",",
+              "               \"Next\": \"Job failed\"",
+              "           }],",
+              "           \"Default\": \"Wait for job to complete\"",
+              "       },",
+              "       \"Job failed\": {",
+              "           \"Type\": \"Fail\",",
+              "           \"Error\": \"Job\",",
+              "           \"Cause\": \"Job did not complete successfully. Please check logs.\"",
+              "       },",
+              "       \"Job completed\": {",
+              "           \"Type\": \"Pass\",",
+              "           \"End\": true",
+              "       }",
+              "   }",
+              "}"
+            ]
+          ]
+        },
+        "RoleArn" : { "Fn::GetAtt" : [ "StepFunctionsStateExecutionRole" , "Arn" ]}
+      }
+    }
+  }
+}
