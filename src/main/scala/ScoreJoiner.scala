@@ -21,6 +21,6 @@ object ScoreJoiner {
         val scores = spark.read.schema(scoreSchema).json(args(1)).as[ScoreRecord]
         val distinct_app_ids = appLogs.select("appId").distinct()
         val joined = distinct_app_ids.join(scores, distinct_app_ids("appId") === scores("id")).
-            select("appId","score","views").write.json(args(2))
+            select("appId","score").write.json(args(2))
     }
 }

@@ -1,0 +1,7 @@
+{
+  "bucket" : "rgtest1",
+  "code_bucket" : "rgtestcode",
+  "vpc_id" : "vpc-05a59976103dfe785",
+  "key_pair_name" : "rgan-keypair",
+  "subnet_id": "subnet-056a6a7986f11947b"
+}

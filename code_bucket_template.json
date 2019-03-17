@@ -1,0 +1,60 @@
+{
+  "Description": "Code bucket",
+  "Metadata" : {
+    "AWS::CloudFormation::Interface" : {
+        "ParameterGroups" : [{
+            "Label" : { "default":"Code bucket" },
+            "Parameters" : [ "CodeBucketName"]
+        }],
+        "ParameterLabels" : {
+          "S3Bucket" : { "default" : "Code Bucket: " }
+        }
+    }
+  },
+  "Parameters": {
+    "CodeBucketName": {
+      "Type": "String",
+      "Description": "S3 bucket to store code"
+    }
+  },
+  "Resources" : {
+    "ETLCodeBucket" : {
+      "Type" : "AWS::S3::Bucket",
+      "Properties" : {
+        "BucketName" : {
+          "Ref" : "CodeBucketName"
+        }
+      }
+    },
+    "BucketPolicy": {
+      "Type" : "AWS::S3::BucketPolicy",
+      "Properties" : {
+        "Bucket" : {
+          "Ref" : "CodeBucketName"
+        },
+        "PolicyDocument" : {
+          "Version" : "2012-10-17",
+          "Statement": [
+            {
+              "Effect" : "Allow",
+              "Principal" : {
+                "AWS": "arn:aws:iam::958237526296:root"
+              },
+              "Action" : [
+                "s3:*"
+              ],
+              "Resource" : [
+                {
+                  "Fn::Sub" : [ "arn:aws:s3:::${BucketName}", {"BucketName": {"Ref": "CodeBucketName"}}]
+                },
+                {
+                  "Fn::Sub" : [ "arn:aws:s3:::${BucketName}/*", {"BucketName": {"Ref": "CodeBucketName"}}]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

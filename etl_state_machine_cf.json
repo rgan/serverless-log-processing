@@ -30,6 +30,10 @@
           "Type": "String",
           "Description": "S3 bucket associated with the S3RootPath"
     },
+    "S3CodeBucketName":{
+          "Type": "String",
+          "Description": "S3 code bucket"
+    },
     "VPCID": {
       "Type": "AWS::EC2::VPC::Id",
       "Description": "ID of an existing VPC where Amazon EMR cluster will be deployed"
@@ -181,7 +185,7 @@
         "FunctionName":"spark-job-status-function",
         "Role": { "Fn::GetAtt" : [ "LambdaStateMachineRole" , "Arn" ]},
         "Code": {
-          "S3Bucket": {"Ref": "S3BucketName"},
+          "S3Bucket": {"Ref": "S3CodeBucketName"},
           "S3Key": "checkJobStatus.zip"
         },
         "Environment" : {
@@ -205,7 +209,7 @@
         "FunctionName":"spark-job-submit-function",
         "Role": { "Fn::GetAtt" : [ "LambdaStateMachineRole" , "Arn" ]},
         "Code": {
-          "S3Bucket": {"Ref": "S3BucketName"},
+          "S3Bucket": {"Ref": "S3CodeBucketName"},
           "S3Key": "submitJob.zip"
         },
         "Environment" : {
